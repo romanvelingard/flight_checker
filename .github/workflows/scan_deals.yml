@@ -1,0 +1,44 @@
+name: Flight Deals Scanner
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC (9:00 AM Israel Time)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Flight Deals Scanner
+        env:
+          TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
+        run: |
+          python flight_deals.py
+
+      - name: Upload Deal Reports (HTML & CSV)
+        uses: actions/upload-artifact@v4
+        with:
+          name: flight-deals-report
+          path: |
+            deals_report.html
+            deals.csv
+
+      - name: Deploy Live Report to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          publish_branch: gh-pages
