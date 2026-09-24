@@ -1,0 +1,14 @@
+# Config with sensitive credentials
+config.json
+
+# Cached reference data and reports
+.cities_cache.json
+deals.csv
+deals_report.html
+
+# Python files and virtual environment
+__pycache__/
+*.pyc
+.venv/
+venv/
+

@@ -1,0 +1,24 @@
+{
+  "api_token": "YOUR_TRAVELPAYOUTS_TOKEN_HERE",
+  "api_url": "https://api.travelpayouts.com/aviasales/v3/prices_for_dates",
+  "cities_url": "https://api.travelpayouts.com/data/en/cities.json",
+  "countries_url": "https://api.travelpayouts.com/data/en/countries.json",
+  "origin": "TLV",
+  "horizon_days": 60,
+  "currency": "usd",
+  "weekend_start_weekday": 4,
+  "weekend_end_weekday": 5,
+  "flex_days": 2,
+  "min_nights": 2,
+  "max_nights": 5,
+  "max_stops": 1,
+  "direct_only": false,
+  "segments": [
+    ["Up to $100", 100],
+    ["$100 - $200", 200],
+    ["Over $200", null]
+  ],
+  "show_per_segment": 50,
+  "best_per_destination": true,
+  "pages_per_query": 3
+}

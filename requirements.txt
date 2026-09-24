@@ -1,0 +1,3 @@
+# Flight Deal Checker Requirements
+# This project uses only Python Standard Library modules (urllib, json, csv, datetime, etc.).
+# No external third-party pip packages are required.
