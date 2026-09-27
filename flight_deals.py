@@ -64,6 +64,12 @@ DEFAULT_CONFIG = {
         ["$100 - $200", 200],
         ["Over $200", None],     # None = no upper bound
     ],
+
+    # Flexible stay search (any day departure, 3-7 nights stay, under $100)
+    "flexible_min_nights": 3,
+    "flexible_max_nights": 7,
+    "flexible_max_price": 100,
+
     "show_per_segment": 50,      # max rows shown per segment in the report
     "best_per_destination": True,  # keep only the cheapest trip per city
 
@@ -192,7 +198,7 @@ def months_between(a, b):
 def fetch_offers(cfg, token, today, fetch=http_json):
     end = today + dt.timedelta(days=cfg["horizon_days"])
     dep_months = months_between(today, end)
-    ret_months = months_between(today, end + dt.timedelta(days=cfg["flex_days"] + cfg["max_nights"]))
+    ret_months = months_between(today, end + dt.timedelta(days=cfg["flex_days"] + cfg.get("flexible_max_nights", cfg["max_nights"])))
     offers = []
     api_url = cfg.get("api_url", "https://api.travelpayouts.com/aviasales/v3/prices_for_dates")
     for dm in dep_months:
@@ -234,9 +240,6 @@ def parse_date(s):
     return dt.date.fromisoformat(s[:10])
 
 
-def build_deals(cfg, offers, today, ref):
-    wins = allowed_windows(cfg, today)
-    seen, deals = set(), []
 AIRLINE_URLS = {
     "W6": "https://wizzair.com/en-gb/booking/select-flight/{origin}/{dest}/{dep}/{ret}/1/0/0",
     "W4": "https://wizzair.com/en-gb/booking/select-flight/{origin}/{dest}/{dep}/{ret}/1/0/0",
@@ -272,8 +275,10 @@ def get_google_flights_link(origin, dest, dep, ret):
     return f"https://www.google.com/travel/flights?q=Flights%20from%20{origin}%20to%20{dest}%20from%20{dep_str}%20to%20{ret_str}"
 
 
-def build_deals(cfg, offers, today, ref):
-    wins = allowed_windows(cfg, today)
+def build_deals(cfg, offers, today, ref, weekend_only=True, min_n=None, max_n=None, max_price=None):
+    wins = allowed_windows(cfg, today) if weekend_only else None
+    min_nights = min_n if min_n is not None else cfg.get("min_nights", 2)
+    max_nights = max_n if max_n is not None else cfg.get("max_nights", 5)
     seen, deals = set(), []
     for o in offers:
         try:
@@ -281,8 +286,14 @@ def build_deals(cfg, offers, today, ref):
             price = float(o["price"])
         except (KeyError, ValueError, TypeError):
             continue
-        if not fits(cfg, wins, dep, ret):
+        nights = (ret - dep).days
+        if not (min_nights <= nights <= max_nights):
             continue
+        if max_price is not None and price > max_price:
+            continue
+        if weekend_only:
+            if not any(a <= dep <= b and c <= ret <= e for a, b, c, e in wins):
+                continue
         ms = cfg["max_stops"]
         if ms is not None and (o.get("transfers", 0) > ms or o.get("return_transfers", 0) > ms):
             continue
@@ -305,7 +316,7 @@ def build_deals(cfg, offers, today, ref):
             "country": country,
             "depart": dep,
             "return": ret,
-            "nights": (ret - dep).days,
+            "nights": nights,
             "airline": airline_code,
             "stops_out": o.get("transfers", 0),
             "stops_back": o.get("return_transfers", 0),
@@ -315,7 +326,7 @@ def build_deals(cfg, offers, today, ref):
             "aviasales_link": aviasales_link,
         })
     deals.sort(key=lambda d: d["price"])
-    if cfg["best_per_destination"]:
+    if cfg.get("best_per_destination", True):
         best = {}
         for d in deals:
             best.setdefault(d["destination"], d)
@@ -326,7 +337,6 @@ def build_deals(cfg, offers, today, ref):
 def segment(cfg, deals):
     out = defaultdict(list)
     for d in deals:
-        lo = 0
         for name, cap in cfg["segments"]:
             if cap is None or d["price"] <= cap:
                 out[name].append(d)
@@ -337,25 +347,32 @@ def segment(cfg, deals):
 # ----------------------------------------------------------------------------
 # Output
 # ----------------------------------------------------------------------------
-def write_csv(deals, segs, path):
+def write_csv(deals, segs, flex_deals, path):
     seg_of = {id(d): n for n, ds in segs.items() for d in ds}
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["segment", "price_usd", "city", "country", "airport", "depart", "return",
+        w.writerow(["section", "segment", "price_usd", "city", "country", "airport", "depart", "return",
                     "nights", "airline", "stops_out", "stops_back", "direct_airline_link",
                     "google_flights_link", "aviasales_link"])
         for d in deals:
-            w.writerow([seg_of.get(id(d)), d["price"], d["city"], d["country"], d["airport"],
+            w.writerow(["Weekend Getaways", seg_of.get(id(d)), d["price"], d["city"], d["country"], d["airport"],
+                        d["depart"], d["return"], d["nights"], d["airline"],
+                        d["stops_out"], d["stops_back"], d.get("direct_airline_link", d["link"]),
+                        d.get("google_flights_link", ""), d.get("aviasales_link", "")])
+        for d in flex_deals:
+            w.writerow(["Flexible (3-7 Days, Under $100)", f"Up to ${d['price']:.0f}", d["price"], d["city"], d["country"], d["airport"],
                         d["depart"], d["return"], d["nights"], d["airline"],
                         d["stops_out"], d["stops_back"], d.get("direct_airline_link", d["link"]),
                         d.get("google_flights_link", ""), d.get("aviasales_link", "")])
 
 
-def write_html(cfg, segs, today, path, n_offers):
+def write_html(cfg, segs, flex_deals, today, path, n_offers):
     e = html.escape
     fmt = lambda x: x.strftime("%a %d %b")
     stops = lambda n: "direct" if n == 0 else "%d stop%s" % (n, "" if n == 1 else "s")
-    sections = []
+    
+    # Section 1: Weekend Getaways
+    weekend_sections = []
     for name, _cap in cfg["segments"]:
         rows = segs.get(name, [])
         body = "".join(
@@ -374,30 +391,78 @@ def write_html(cfg, segs, today, path, n_offers):
             for d in rows[: cfg["show_per_segment"]])
         if not body:
             body = "<tr><td colspan=5 class=m>No trips found in this range.</td></tr>"
-        sections.append("<h2>{} <span class=c>{}</span></h2><table><thead><tr><th>Price</th>"
-                        "<th>Destination</th><th>Dates</th><th>Airline</th><th>Links</th></tr></thead>"
-                        "<tbody>{}</tbody></table>".format(e(name), len(rows), body))
+        weekend_sections.append("<h3>{} <span class=c>({})</span></h3><table><thead><tr><th>Price</th>"
+                                "<th>Destination</th><th>Dates</th><th>Airline</th><th>Links</th></tr></thead>"
+                                "<tbody>{}</tbody></table>".format(e(name), len(rows), body))
+    
+    # Section 2: Flexible Deals under $100 (3-7 nights)
+    flex_min = cfg.get("flexible_min_nights", 3)
+    flex_max = cfg.get("flexible_max_nights", 7)
+    flex_price = cfg.get("flexible_max_price", 100)
+    
+    flex_body = "".join(
+        "<tr><td class=p>${:.0f}</td><td><b>{}</b><br><span class=m>{}</span></td>"
+        "<td>{} &rarr; {}<br><span class=m>{} night{}</span></td>"
+        "<td>{}<br><span class=m>{} / {}</span></td>"
+        "<td><a href=\"{}\" target=_blank class=btn>Direct</a> "
+        "<a href=\"{}\" target=_blank class=btn-sec>Google Flights</a> "
+        "<a href=\"{}\" target=_blank class=btn-sec>Aviasales</a></td></tr>".format(
+            d["price"], e(d["city"]), e(" • ".join(x for x in (d["country"], d["airport"]) if x)),
+            fmt(d["depart"]), fmt(d["return"]), d["nights"], "" if d["nights"] == 1 else "s",
+            e(d["airline"]), stops(d["stops_out"]), stops(d["stops_back"]),
+            e(d.get("direct_airline_link", d["link"])),
+            e(d.get("google_flights_link", "")),
+            e(d.get("aviasales_link", "")))
+        for d in flex_deals[: cfg.get("show_per_segment", 50)])
+    if not flex_body:
+        flex_body = f"<tr><td colspan=5 class=m>No flexible trips found under ${flex_price}.</td></tr>"
+
     end = today + dt.timedelta(days=cfg["horizon_days"])
+    
     page = """<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>TLV Weekend Deals</title><style>
-:root{{--bg:#fafaf8;--fg:#1d1d1b;--m:#6b6b66;--line:#e4e4df;--acc:#0b6e4f;--sec:#3366cc}}
-@media(prefers-color-scheme:dark){{:root{{--bg:#161615;--fg:#ececea;--m:#9a9a94;--line:#2c2c2a;--acc:#4fc79c;--sec:#6699ff}}}}
-body{{background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif;margin:0;padding:24px 16px;max-width:960px;margin:auto}}
-h1{{font-size:22px;margin:0 0 4px}}h2{{font-size:17px;margin:28px 0 8px}}.c{{color:var(--m);font-weight:400}}
-.m{{color:var(--m);font-size:13px}}table{{width:100%;border-collapse:collapse}}
-th{{text-align:left;font-size:12px;color:var(--m);font-weight:500;border-bottom:1px solid var(--line);padding:6px 8px}}
-td{{border-bottom:1px solid var(--line);padding:8px;vertical-align:top}}.p{{font-weight:600;color:var(--acc);white-space:nowrap}}
+<title>Flight Deals Scanner - {origin}</title><style>
+:root{{--bg:#fafaf8;--fg:#1d1d1b;--m:#6b6b66;--line:#e4e4df;--acc:#0b6e4f;--sec:#3366cc;--card-bg:#ffffff}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#161615;--fg:#ececea;--m:#9a9a94;--line:#2c2c2a;--acc:#4fc79c;--sec:#6699ff;--card-bg:#1e1e1c}}}}
+body{{background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:0;padding:24px 16px;max-width:960px;margin:auto}}
+h1{{font-size:24px;margin:0 0 6px;letter-spacing:-0.5px}}
+h2{{font-size:19px;margin:32px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--acc);display:flex;align-items:center;gap:8px}}
+h3{{font-size:16px;margin:20px 0 8px}}.c{{color:var(--m);font-weight:400}}
+.subtitle{{color:var(--m);font-size:13px;margin-bottom:24px;background:var(--card-bg);padding:12px 16px;border-radius:8px;border:1px solid var(--line)}}
+.section-badge{{background:var(--acc);color:#fff;font-size:12px;padding:2px 8px;border-radius:12px;font-weight:600}}
+table{{width:100%;border-collapse:collapse;margin-bottom:24px;background:var(--card-bg);border-radius:8px;overflow:hidden;border:1px solid var(--line)}}
+th{{text-align:left;font-size:12px;color:var(--m);font-weight:600;border-bottom:1px solid var(--line);padding:8px 12px;background:var(--bg)}}
+td{{border-bottom:1px solid var(--line);padding:10px 12px;vertical-align:top}}
+tr:last-child td{{border-bottom:none}}
+.p{{font-weight:700;color:var(--acc);font-size:16px;white-space:nowrap}}
+.m{{color:var(--m);font-size:13px}}
 a{{color:var(--acc);text-decoration:none}}a:hover{{text-decoration:underline}}
-.btn{{display:inline-block;padding:3px 8px;border-radius:4px;background:var(--acc);color:#fff!important;font-size:12px;font-weight:500}}
-.btn-sec{{display:inline-block;padding:3px 8px;border-radius:4px;background:transparent;border:1px solid var(--line);color:var(--fg)!important;font-size:12px}}
+.btn{{display:inline-block;padding:4px 10px;border-radius:4px;background:var(--acc);color:#fff!important;font-size:12px;font-weight:600;transition:opacity 0.2s}}
+.btn:hover{{opacity:0.9;text-decoration:none}}
+.btn-sec{{display:inline-block;padding:3px 8px;border-radius:4px;background:transparent;border:1px solid var(--line);color:var(--fg)!important;font-size:12px;transition:background 0.2s}}
+.btn-sec:hover{{background:var(--line);text-decoration:none}}
 </style></head><body>
-<h1>Weekend deals from {origin}</h1>
-<div class=m>Departures {start} - {end} • depart Wed-Fri, return Sat-Mon, {mn}-{mx} nights • round-trip per passenger •
-{n} cached offers scanned • generated {now}. Prices are cached from recent searches - confirm before booking.</div>
-{sections}</body></html>""".format(
-        origin=e(cfg["origin"]), start=fmt(today), end=fmt(end), mn=cfg["min_nights"],
-        mx=cfg["max_nights"], n=n_offers, now=dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-        sections="".join(sections))
+<h1>✈️ Flight Deals from {origin}</h1>
+<div class="subtitle">
+  Departures scanned: <b>{start}</b> to <b>{end}</b> (next {horizon} days) • {n} cached offers analyzed • generated {now}<br>
+  <span class=m>All prices are round-trip per passenger in USD. Prices are cached from recent user searches—always confirm before booking.</span>
+</div>
+
+<h2>🗓️ Weekend Getaways <span class="section-badge">{mn_wknd}-{mx_wknd} Nights</span></h2>
+<div class=m style="margin-bottom:12px">Depart Wed–Fri, return Sat–Mon, covering the weekend with flexible stretch days.</div>
+{weekend_html}
+
+<h2>🌟 Flexible Deals: 3 to 7 Days Stay <span class="section-badge">Under ${flex_price}</span></h2>
+<div class=m style="margin-bottom:12px">Any departure day of the week, staying {flex_min}–{flex_max} nights, priced up to ${flex_price}.</div>
+<table><thead><tr><th>Price</th><th>Destination</th><th>Dates</th><th>Airline</th><th>Links</th></tr></thead>
+<tbody>{flex_html}</tbody></table>
+</body></html>""".format(
+        origin=e(cfg["origin"]), start=fmt(today), end=fmt(end), horizon=cfg["horizon_days"],
+        mn_wknd=cfg["min_nights"], mx_wknd=cfg["max_nights"], n=n_offers,
+        now=dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        weekend_html="".join(weekend_sections),
+        flex_min=flex_min, flex_max=flex_max, flex_price=flex_price,
+        flex_html=flex_body)
+
     Path(path).write_text(page, encoding="utf-8")
 
 
@@ -414,18 +479,37 @@ def main(fetch=http_json, today=None):
     print("Scanning %s -> anywhere, next %d days..." % (cfg["origin"], cfg["horizon_days"]))
     offers = fetch_offers(cfg, token, today, fetch)
     ref = load_reference(cfg) if fetch is http_json else {}
-    deals = build_deals(cfg, offers, today, ref)
+
+    # 1. Weekend deals (Upper Section)
+    deals = build_deals(cfg, offers, today, ref, weekend_only=True)
     segs = segment(cfg, deals)
-    write_csv(deals, segs, OUT_DIR / "deals.csv")
-    write_html(cfg, segs, today, OUT_DIR / "deals_report.html", len(offers))
-    print("\n%d matching trips (%d offers scanned)" % (len(deals), len(offers)))
+
+    # 2. Flexible deals (Lower Section: 3-7 nights, under $100)
+    flex_deals = build_deals(
+        cfg, offers, today, ref,
+        weekend_only=False,
+        min_n=cfg.get("flexible_min_nights", 3),
+        max_n=cfg.get("flexible_max_nights", 7),
+        max_price=cfg.get("flexible_max_price", 100)
+    )
+
+    write_csv(deals, segs, flex_deals, OUT_DIR / "deals.csv")
+    write_html(cfg, segs, flex_deals, today, OUT_DIR / "deals_report.html", len(offers))
+
+    print("\n[Weekend Getaways] %d matching trips" % len(deals))
     for name, _ in cfg["segments"]:
         ds = segs.get(name, [])
-        print("\n== %s: %d ==" % (name, len(ds)))
-        for d in ds[:10]:
-            print("  $%-5.0f %-18s %s -> %s  %s" % (d["price"], d["city"][:18], d["depart"],
-                                                  d["return"], d["airline"]))
-    print("\nReport: %s" % (OUT_DIR / "deals_report.html"))
+        print("  == %s: %d ==" % (name, len(ds)))
+        for d in ds[:5]:
+            print("    $%-5.0f %-18s %s -> %s  %s (%dn)" % (d["price"], d["city"][:18], d["depart"],
+                                                           d["return"], d["airline"], d["nights"]))
+
+    print("\n[Flexible 3-7 Days (Under $100)] %d matching trips" % len(flex_deals))
+    for d in flex_deals[:10]:
+        print("  $%-5.0f %-18s %s -> %s  %s (%dn)" % (d["price"], d["city"][:18], d["depart"],
+                                                       d["return"], d["airline"], d["nights"]))
+
+    print("\nReport generated: %s" % (OUT_DIR / "deals_report.html"))
 
 
 if __name__ == "__main__":

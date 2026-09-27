@@ -18,6 +18,9 @@
     ["$100 - $200", 200],
     ["Over $200", null]
   ],
+  "flexible_min_nights": 3,
+  "flexible_max_nights": 7,
+  "flexible_max_price": 100,
   "show_per_segment": 50,
   "best_per_destination": true,
   "pages_per_query": 3
