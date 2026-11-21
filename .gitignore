@@ -3,8 +3,11 @@ config.json
 
 # Cached reference data and reports
 .cities_cache.json
+.airlines_cache.json
+.price_history.json
 deals.csv
 deals_report.html
+dist/
 
 # Python files and virtual environment
 __pycache__/

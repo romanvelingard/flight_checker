@@ -3,9 +3,10 @@
 A Python scanner for finding weekend flight deals from TLV (or any origin) using Travelpayouts / Aviasales Data API.
 
 ## Features
-- **Configurable Search**: Origin, trip horizon, weekend days, flex days, min/max stay duration, max stops, and budget segments.
-- **Direct Links**: Generates direct booking links for airlines (Wizz Air, Ryanair, El Al, Israir, Arkia, Aegean, etc.), Google Flights 1-click links, and Aviasales links.
-- **Automated Reports**: Detailed HTML report (`deals_report.html`) and CSV export (`deals.csv`).
+- **Configurable Search**: Origin, trip horizon, weekend days, flex days, min/max stay duration, max stops, budget segments, destination/country exclusions, and favorite destination highlights.
+- **Smart Booking Links**: Pre-filled direct booking links where supported (Wizz Air, Ryanair), Google Flights, Skyscanner, Aviasales, and airline sites.
+- **Interactive Reports**: Responsive dark/light HTML report (`deals_report.html`) with live search, month/price/direct/favorites/new-drop filters, client-side sorting, airline names, flight durations, and CSV export (`deals.csv`).
+- **Price-Drop & New Deal Tracking**: Tracks previous run prices in `.price_history.json` (cached across runs in GitHub Actions) to highlight `NEW` deals and price drops (`↓ $...`).
 
 ## Local Setup & Usage
 
@@ -49,14 +50,13 @@ This repository includes a pre-configured **GitHub Actions Workflow** (`.github/
    - Navigate to **Settings** -> **Secrets and variables** -> **Actions**.
    - Click **New repository secret**.
    - **Name**: `TRAVELPAYOUTS_TOKEN`
-   - **Secret**: Paste your Travelpayouts API token (`800dce3ea0dee3c35dcc9f11759bf561`).
+   - **Secret**: Paste your Travelpayouts API token (from **Profile -> API token** on Travelpayouts).
    - Click **Add secret**.
 
 2. **Enable Live Web Report (GitHub Pages)**:
    - In your repository, go to **Settings** -> **Pages**.
-   - Under **Build and deployment** -> **Source**, select **Deploy from a branch**.
-   - Under **Branch**, select `gh-pages` and `/ (root)`, then click **Save**.
-   - Your live report will be published at: `https://romanvelingard.github.io/flight_checker/deals_report.html`
+   - Under **Build and deployment** -> **Source**, select **GitHub Actions**.
+   - Your live report will be published at: `https://romanvelingard.github.io/flight_checker/` (also accessible at `deals_report.html`).
 
 3. **Manual Run anytime**:
    - Go to the **Actions** tab on GitHub -> Click **Flight Deals Scanner** -> Click **Run workflow**.

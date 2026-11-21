@@ -31,20 +31,31 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Restore price history cache
+        uses: actions/cache@v4
+        with:
+          path: .price_history.json
+          key: price-history-${{ github.run_id }}
+          restore-keys: |
+            price-history-
+
       - name: Run Flight Deals Scanner
         env:
           TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
         run: |
           python flight_deals.py
-          cp deals_report.html index.html
+          mkdir -p dist
+          cp deals_report.html dist/index.html
+          cp deals_report.html dist/deals_report.html
+          cp deals.csv dist/deals.csv
 
       - name: Upload Build Artifacts (HTML & CSV)
         uses: actions/upload-artifact@v4
         with:
           name: flight-deals-report
           path: |
-            deals_report.html
-            deals.csv
+            dist/deals_report.html
+            dist/deals.csv
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -52,7 +63,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: 'dist'
 
       - name: Deploy to GitHub Pages
         id: deployment
